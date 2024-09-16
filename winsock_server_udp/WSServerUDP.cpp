@@ -1,3 +1,5 @@
+#if 0
+
 #undef UNICODE
 
 #define WIN32_LEAN_AND_MEAN
@@ -15,7 +17,7 @@
 #define DEFAULT_BUFLEN 512
 #define DEFAULT_PORT "27015"
 
-int __cdecl main(void)
+int main(void)
 {
     WSADATA wsaData;
     int iResult;
@@ -79,7 +81,7 @@ int __cdecl main(void)
         WSACleanup();
         return 1;
     }*/
-
+    
     printf("listener: waiting for recvfrom...\n");
     sockaddr clientAddress;
     int clientLen = sizeof(clientAddress);
@@ -92,8 +94,8 @@ int __cdecl main(void)
             (sockaddr*) & clientAddress,
             &clientLen
         );
-        if (iResult > 0)
-            printf("Got %d bytes, message:\t%s\n", iResult, recvbuf);
+        if (iResult > 0) 
+            printf("Got %d bytes from %s, message:\t%s\n", iResult, clientAddress.sa_data, recvbuf);
         if (iResult < 0)
             printf("recvfrom error: %d\n", WSAGetLastError());
     } while (true);
@@ -153,3 +155,4 @@ int __cdecl main(void)
 
     return 0;
 }
+#endif

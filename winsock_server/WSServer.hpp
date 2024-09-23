@@ -7,28 +7,29 @@
 #include <stdexcept>
 #include <algorithm>
 
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
+//#include <windows.h>
+//#include <winsock2.h>
+//#include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+#include "../WSGeneral.hpp"
 
 // Need to link with Ws2_32.lib
 #pragma comment (lib, "Ws2_32.lib")
 // #pragma comment (lib, "Mswsock.lib")
 
-#define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "27015"
-        
+
+
 class WSServer {
 public:
-    WSServer(const std::string& port)
+    WSServer(const std::string& address, const std::string& port)
         : clientSocket{ INVALID_SOCKET }
         , listenSocket{ INVALID_SOCKET }
         , recvbuflen{ DEFAULT_BUFLEN }
     {
         recvbuf.resize(recvbuflen);
-        auto result = resolveAddressAndPort(port);
+        auto result = resolveAddressAndPort(address, port);
         setUpListenSocket(result);
 	}
 
@@ -38,18 +39,27 @@ public:
         if (listenSocket != INVALID_SOCKET)
             closesocket(listenSocket);
     }
-	
-    int ijIo = 0;
 
 	void accept() {
         std::cout << "Listening for client...\n";
         // Accept a client socket
-        clientSocket = ::accept(listenSocket, nullptr, nullptr);
+        sockaddr_storage clientAddress;
+        int clientAddrLen{ sizeof(clientAddress) };
+        
+        clientSocket = ::accept(
+            listenSocket, 
+            reinterpret_cast<sockaddr*>(&clientAddress),
+            &clientAddrLen
+        );
         if (clientSocket == INVALID_SOCKET) {
             printf("accept failed with error: %d\n", WSAGetLastError());
             throw SocketError("accept failed.");
         }
-        std::cout << "Client accepted!\n";
+
+        std::vector<char> addrStrBuf;
+        addrStrBuf.resize(INET6_ADDRSTRLEN);
+        auto dst = inet_ntop(clientAddress.ss_family, getInAddr(reinterpret_cast<sockaddr*>(&clientAddress)), &addrStrBuf[0], addrStrBuf.size());
+        std::cout << "Client " << dst << " accepted!\n";
 	}
 
     void send(const char* msg) {
@@ -73,28 +83,24 @@ public:
         return received;
     }
 
-    struct SocketError : public std::runtime_error {
-        SocketError(const std::string& error) : std::runtime_error(error) {}
-    };
-
 private:
     SOCKET clientSocket;
     SOCKET listenSocket;
     int recvbuflen;
     std::vector<char> recvbuf;
 
-	addrinfo* resolveAddressAndPort(const std::string& port) {
+	addrinfo* resolveAddressAndPort(const std::string& address, const std::string& port) {
 		addrinfo* result{ nullptr };
 		addrinfo hints;
 
 		ZeroMemory(&hints, sizeof(hints));
-		hints.ai_family = AF_UNSPEC;
+		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_STREAM;
 		hints.ai_protocol = IPPROTO_TCP;
 		hints.ai_flags = AI_PASSIVE;
 
 		// Resolve the server address and port
-		int iResult{ getaddrinfo(nullptr, port.c_str(), &hints, &result)};
+		int iResult{ getaddrinfo(address.c_str(), port.c_str(), &hints, &result)};
 		if (iResult != 0) {
 			printf("getaddrinfo failed with error: %d\n", iResult);
 			throw SocketError{ "getaddrinfo failed" };
@@ -118,6 +124,13 @@ private:
             freeaddrinfo(result);
             listenSocket = INVALID_SOCKET;
             throw SocketError("bind failed.");
+        }
+
+        if (result) {
+            std::vector<char> addrStrBuf;
+            addrStrBuf.resize(INET6_ADDRSTRLEN);
+            auto dst = inet_ntop(result->ai_family, getInAddr(reinterpret_cast<sockaddr*>(result->ai_addr)), &addrStrBuf[0], addrStrBuf.size());
+            std::cout << "Set up socket at: " << dst << '\n';
         }
 
         freeaddrinfo(result);

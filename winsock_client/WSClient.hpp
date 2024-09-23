@@ -5,21 +5,19 @@
 #include <vector>
 #include <string>
 #include <stdexcept>
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
+//#include <windows.h>
+//#include <winsock2.h>
+//#include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+#include "../WSGeneral.hpp"
 
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
 #pragma comment (lib, "Ws2_32.lib")
 #pragma comment (lib, "Mswsock.lib")
 #pragma comment (lib, "AdvApi32.lib")
-
-
-#define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "27015"
 
 
 class WSClient {
@@ -48,8 +46,8 @@ public:
 		tryToConnect(result);
 	}
 
-	void send(const char* msg) {
-		int iResult = ::send(connectSocket, msg, static_cast<int>(strlen(msg)), 0);
+	void send(const std::string& msg) {
+		int iResult = ::send(connectSocket, msg.c_str(), msg.size(), 0);
 		if (iResult == SOCKET_ERROR) {
 			printf("send failed with error: %d\n", WSAGetLastError());
 			throw SocketError{ "send failed" };
@@ -69,9 +67,6 @@ public:
 		return received;
 	}
 
-	struct SocketError : public std::runtime_error {
-		SocketError(const std::string& error) : std::runtime_error(error) {}
-	};
 
 private:
 	SOCKET connectSocket;
@@ -83,7 +78,7 @@ private:
 		addrinfo hints;
 
 		ZeroMemory(&hints, sizeof(hints));
-		hints.ai_family = AF_UNSPEC;
+		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_STREAM;
 		hints.ai_protocol = IPPROTO_TCP;
 
@@ -118,6 +113,12 @@ private:
 			break;
 		}
 
+		if (ptr) {
+			std::vector<char> addrStrBuf;
+			addrStrBuf.resize(INET6_ADDRSTRLEN);
+			auto dst = inet_ntop(ptr->ai_family, getInAddr(reinterpret_cast<sockaddr*>(ptr->ai_addr)), &addrStrBuf[0], addrStrBuf.size());
+			std::cout << "connecting to " << dst << '\n';
+		}
 		freeaddrinfo(result);
 
 		if (connectSocket == INVALID_SOCKET) {
@@ -128,3 +129,66 @@ private:
 
 };
 
+
+class ReconnectableWSClient {
+public:
+	ReconnectableWSClient()
+		: m_wsc()
+	{}
+
+	ReconnectableWSClient(const std::string& address, const std::string& port)
+		: ReconnectableWSClient()
+	{
+		connect(address, port);
+	}
+
+	void connect(const std::string& address, const std::string& port) {
+		m_address = address;
+		m_port = port;
+		while (true) {
+			try {
+				m_wsc.connect(address, port);
+				std::cout << "connection established.\n";
+				break;
+			}
+			catch (SocketError& err) {
+				std::cout << err.what() << '\n';
+			}
+		}
+	}
+
+	void send(const char* msg) {
+		while (true) {
+			try {
+				m_wsc.send(msg);
+				break;
+			}
+			catch (SocketError& err) {
+				std::cout << err.what() << '\n';
+				std::cout << "trying to reconnect..." << '\n';
+				connect(m_address, m_port);
+			}
+		}
+	}
+
+	std::vector<char> read() {
+		while (true) {
+			try {
+				auto receivedMsg = m_wsc.read();
+				return receivedMsg;
+				break;
+			}
+			catch (SocketError& err) {
+				std::cout << err.what() << '\n';
+				std::cout << "trying to reconnect..." << '\n';
+				connect(m_address, m_port);
+			}
+		}
+	}
+
+
+private:
+	WSClient m_wsc;
+	std::string m_address;
+	std::string m_port;
+};

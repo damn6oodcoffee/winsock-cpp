@@ -8,34 +8,28 @@
 #include <stdexcept>
 #include <vector>
 
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
+//#include <windows.h>
+//#include <winsock2.h>
+//#include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
+
+#include "../WSGeneral.hpp"
 
 // Need to link with Ws2_32.lib
 #pragma comment (lib, "Ws2_32.lib")
 // #pragma comment (lib, "Mswsock.lib")
 
-#define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "27015"
 
-void* getInAddr(struct sockaddr* psa) {
-	if (psa->sa_family == AF_INET) {
-		return &reinterpret_cast<sockaddr_in*>(psa)->sin_addr;
-	}
-	return &reinterpret_cast<sockaddr_in6*>(psa)->sin6_addr;
-}
 
 class WSServerUDP {
 public:
-	WSServerUDP(const std::string& port)
+	WSServerUDP(const std::string& address, const std::string& port)
 		: listenSocket{ INVALID_SOCKET }
 		, recvbuflen{ DEFAULT_BUFLEN }
 	{
 		recvbuf.resize(recvbuflen);
-		auto result = resolveAddressAndPort(port);
+		auto result = resolveAddressAndPort(address, port);
 		setUpListenSocket(result);
 	}
 
@@ -61,18 +55,27 @@ public:
 			&clientAddress,
 			&clientLen
 		) };
+		if (iResult == SOCKET_ERROR) {
+			printf("receive ack failed with error: %d\n", WSAGetLastError());
+			throw SocketError{ "receive ack failed" };
+		}
 		printf("Got %d bytes from %s\n", iResult, 
 			inet_ntop(clientAddress.sa_family, getInAddr(&clientAddress), &addrStr[0], addrStr.size())
 		);
 		auto end = recvbuf.begin();
 		std::advance(end, iResult);
 		received.assign(recvbuf.begin(), end);
+
+		// Send ACK response
+		const char* response = "ACK";
+		iResult = sendto(listenSocket, response, strlen(response), 0, &clientAddress, clientLen);
+		if (iResult == SOCKET_ERROR) {
+			printf("send ACK failed with error: %d\n", WSAGetLastError());
+			throw SocketError{ "send ACK failed" };
+		}
 		return received;
 	}
 
-	struct SocketError : public std::runtime_error {
-		SocketError(const std::string& error) : std::runtime_error(error) {}
-	};
 
 private:
 	SOCKET listenSocket;
@@ -80,7 +83,7 @@ private:
 	std::vector<char> recvbuf;
 	sockaddr clientAddress;
 
-	addrinfo* resolveAddressAndPort(const std::string& port) {
+	addrinfo* resolveAddressAndPort(const std::string& address, const std::string& port) {
 		addrinfo* result{ nullptr };
 		addrinfo hints;
 
@@ -88,10 +91,10 @@ private:
 		hints.ai_family = AF_INET;
 		hints.ai_socktype = SOCK_DGRAM;
 		hints.ai_protocol = IPPROTO_UDP;
-		hints.ai_flags = AI_PASSIVE;
+		//hints.ai_flags = AI_PASSIVE;
 
 		// Resolve the server address and port
-		int iResult{ getaddrinfo(nullptr, port.c_str(), &hints, &result) };
+		int iResult{ getaddrinfo(address.c_str(), port.c_str(), &hints, &result)};
 		if (iResult != 0) {
 			printf("getaddrinfo failed with error: %d\n", iResult);
 			throw SocketError{ "getaddrinfo failed" };
@@ -116,9 +119,14 @@ private:
 			throw SocketError("bind failed.");
 		}
 
+		if (result) {
+			std::vector<char> addrStrBuf;
+			addrStrBuf.resize(INET6_ADDRSTRLEN);
+			auto dst = inet_ntop(result->ai_family, getInAddr(reinterpret_cast<sockaddr*>(result->ai_addr)), &addrStrBuf[0], addrStrBuf.size());
+			std::cout << "Set up socket at: " << dst << '\n';
+		}
+
 		freeaddrinfo(result);
 
 	}
-
-
 };

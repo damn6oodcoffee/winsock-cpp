@@ -4,21 +4,18 @@
 #include <string>
 #include <vector>
 #include <iostream>
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
+//#include <windows.h>
+//#include <winsock2.h>
+//#include <ws2tcpip.h>
 #include <stdlib.h>
 #include <stdio.h>
 
+#include "../WSGeneral.hpp"
 
 // Need to link with Ws2_32.lib, Mswsock.lib, and Advapi32.lib
 #pragma comment (lib, "Ws2_32.lib")
 #pragma comment (lib, "Mswsock.lib")
 #pragma comment (lib, "AdvApi32.lib")
-
-
-#define DEFAULT_BUFLEN 512
-#define DEFAULT_PORT "27015"
 
 
 class WSClientUDP {
@@ -37,7 +34,7 @@ public:
 	{
 		connect(address, port);
 	}
-
+	
 	~WSClientUDP() {
 		if (connectSocket != INVALID_SOCKET)
 			closesocket(connectSocket);
@@ -48,26 +45,50 @@ public:
 		tryToConnect(result);
 	}
 
-	void send(const char* msg) {
+	void send(const std::string& msg) {
 		int iResult{
 			sendto(
 				connectSocket,
-				msg,
-				static_cast<int>(strlen(msg)),
+				msg.c_str(),
+				msg.size(),
 				0,
 				ptr->ai_addr,
 				ptr->ai_addrlen
 			)
-		};/*
+		};
 		if (iResult == SOCKET_ERROR) {
 			printf("send failed with error: %d\n", WSAGetLastError());
 			throw SocketError{ "send failed" };
-		}*/
+		}
 	}
 
-	struct SocketError : public std::runtime_error {
-		SocketError(const std::string& error) : std::runtime_error(error) {}
-	};
+	std::vector<char> waitForACK() {
+		int iTimeout = 1600;
+		int iRet = setsockopt(connectSocket,
+			SOL_SOCKET,
+			SO_RCVTIMEO,
+			/*
+			reinterpret_cast<char*>(&tv),
+			sizeof(timeval) );
+			*/
+			(const char*)&iTimeout,
+			sizeof(iTimeout));
+		sockaddr receiveAddr;
+		int receiveLen{ sizeof(receiveAddr) };
+		int iResult = recvfrom(connectSocket, &recvbuf[0], recvbuflen, 0, &receiveAddr, &receiveLen);
+		if (iResult == SOCKET_ERROR) {
+			printf("receive ack failed with error: %d\n", WSAGetLastError());
+			throw SocketError{ "receive ack failed" };
+		}
+		return recvbuf;
+	}
+
+	std::vector<char> sendAndWaitForACK(const std::string& msg) {
+		send(msg);
+		auto received = waitForACK();
+		return received;
+	}
+
 private:
 	SOCKET connectSocket;
 	int recvbuflen;
@@ -92,7 +113,7 @@ private:
 		return result;
 	}
 
-	addrinfo* tryToConnect(addrinfo* result) {
+	void tryToConnect(addrinfo* result) {
 		// Attempt to connect to an address until one succeeds
 		for (ptr = result; ptr != nullptr; ptr = ptr->ai_next) {
 			// Create a SOCKET for connecting to server
@@ -108,6 +129,32 @@ private:
 			printf("failed to create socket: %ld\n", WSAGetLastError());
 			throw SocketError{ "failed to create socket: " };
 		}
+
+		std::vector<char> addrStrBuf;
+		addrStrBuf.resize(INET6_ADDRSTRLEN);
+		auto dst = inet_ntop(ptr->ai_family, getInAddr(reinterpret_cast<sockaddr*>(ptr->ai_addr)), &addrStrBuf[0], addrStrBuf.size());
+		std::cout << "connecting to " << dst << '\n';
 	}
 
 };
+
+
+inline void sendUntilACK(WSClientUDP& wsc, const std::string& msg) {
+	std::ostream_iterator<char> outIt(std::cout, "");
+	while (true) {
+		try {
+			wsc.send(msg.c_str());
+			auto response = wsc.waitForACK();
+			std::cout << "received message from SERVER:\t";
+			std::copy(response.begin(), response.end(), outIt);
+			std::cout << '\n';
+			std::cout << '\n';
+			break;
+		}
+		catch (SocketError& err) {
+			std::cout << err.what() << '\n';
+			std::cout << "trying to resend...\n";
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+		}
+	}
+}
